@@ -191,7 +191,7 @@ double pompa[4]={666,666,666,666}; // Codice di not received yet
 int esponente[4]={0,0,0,0};
 int i;
 int head;
-double temp[2]; 
+double temp[4]; 
 void loop() {
 
   int tempo,ref;
@@ -211,20 +211,24 @@ Serial.println("Waiting...");
     RF24NetworkHeader header;
      Serial.println("Ricevuto messaggio");
             
-             int incomingData[3];
+             int incomingData[5];
       network.read(header, &incomingData, sizeof(incomingData));
        temp[0]=incomingData[1];
        temp[1]=incomingData[2];
-       
+       temp[2]=incomingData[3];
+       temp[3]=incomingData[4]; // se temp ricevuto è -1 NON AGGIORNARE LO SCHERMO
         network_avail=1;
         out=1;
-         Serial.println(header.from_node);
+         
   } 
    
-  delay(10);
+ 
   tempo=millis();
 
   }
+
+// IN INCOMING DATA[0] HO CODICE DI ERRORE!
+//IL QUALE GESTISCE UN ALERT MODE
 
 // trasformazione di incoming Data QUA poi ci sarà da discernere tra i vari casi se il messaggio è inviato da master 1 o master 2 
 // per semplicità codice del caso singolo. l'idea è quella di shiftare banalmente
@@ -236,9 +240,11 @@ if(network_avail){ //aggiorna le cose solo se hai ricevuto
 
 int j=0;
 
-for (i=0;i<2;i++){
+for (i=0;i<4;i++){
+  if (temp[i]!=-1){
 temp[i]=temp[i]*5/1023;
 temp[i]=pow(10,(temp[i]-3.4243)/0.3025);
+  
 if (temp[i]<1){
   j=0;
   // itera finchè pressure non diventa composto da 123.123 conta il numero di volte hai fatto per 10 
@@ -249,7 +255,7 @@ if (temp[i]<1){
 
 esponente[i]=-j;
 pompa[i]= temp[i];
-                        
+  }                      
 
 //else if(pompa[i]=666); // DA GESTIRE IL CASO PRESSIONI ALTE!!!!!!!
 
@@ -260,7 +266,7 @@ Serial.print("e");
 Serial.println(esponente[i]);
 
 // attenzione alLO ZERO MACCHINA DI 10^-12 !!! segnalare altro
-if(j==-12){
+if(j==-12 || temp[i]==-1){
 pompa[i]==666;   //messaggio di errore
 esponente[i]=0;
 }
@@ -396,8 +402,8 @@ data[0]=on_off;
 data[1]=0;
 data[2]=0;
 Serial.println(on_off);
-
- for (i=0;i<10;i++){
+// NON INVIARE NULLA SE SEI IN OFF
+ for (i=0;i<2;i++){
   RF24NetworkHeader header3(base00);     // (Address where the data is going)
 
   bool ok2 = network.write(header3, &data, sizeof(data)); // Send the data
