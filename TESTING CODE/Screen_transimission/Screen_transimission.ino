@@ -79,7 +79,7 @@ char OFF[4] = "OFF";
 
 int on_off = 0; // questa variabile serve a capire quale bottone si deve disegnare on, verde oppure off, rosso
 int change = 0; // il bottone viene ridisegnato all'interno del loop solo se vi è stata una modifica nello stato del bottone
-                             
+                          
 #include <MCUFRIEND_kbv.h>
 MCUFRIEND_kbv tft;
 TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
@@ -314,7 +314,7 @@ if (pompa[3]!=666){
 
 
   
-ù
+
 
   tempo=millis();
    ref=tempo;
