@@ -1,0 +1,107 @@
+ /*SENSOR1 CODE
+*AUTHORS:Fede, Marta, Gian
+*DATA:05/05/2019
+*DESCRIPTION:Sensor 1 code
+ */
+//Libraries
+#include <RF24Network.h>
+#include <RF24.h>
+#include <SPI.h>
+
+
+//Communication, definitions
+RF24 radio(10, 9);     
+RF24Network network(radio);      // Include the radio in the network
+const uint16_t this_node = 02;   // Address of this node in Octal format ( 04,031, etc)
+const uint16_t  screenmaster= 00;      // Address of the other node in Octal format
+
+//variables
+int timem,ref;
+int counterNR=0;
+
+int data[4]={0,-1,-1,-1}; //data sent
+int incomingData[3]; //data arriving
+int checkscreen;//control variables
+int A[3]={A1,A2,A3};//analog pins
+int expmode=1;//experiment mode variable, it waits for the message of the screen before starting
+
+
+void setup() {
+     //Communication initialization
+     Serial.begin(9600);
+     SPI.begin();
+     radio.begin();
+     network.begin(90, this_node);  //(channel, node address)
+     radio.setDataRate(RF24_250KBPS);
+     radio.setChannel(124);
+
+     //Pins definition
+     pinMode(A1,INPUT);
+     pinMode(A2,INPUT);
+     pinMode(A3,INPUT);
+     }
+
+
+void loop() {
+     //time control 
+     timem=millis();
+     ref=timem;
+     
+     //temp variables
+     int i;
+     int temp[2]={0,0};
+
+     //packet control
+     checkscreen=0;
+    
+     //receiving data
+    // while(timem-ref<1000 && timem-ref>-0.01){
+    
+          network.update(); 
+          
+          while ( network.available() ) {
+                RF24NetworkHeader header;
+                //read data and recognize the provenience
+                network.read(header, &incomingData, sizeof(incomingData));
+                //Serial.println(header.from_node);
+                //message coming from the screen master
+                if(header.from_node==0){
+                  checkscreen=1;
+                  expmode=incomingData[0];
+                  Serial.print("Received from the screen..Mode exp:");
+                  Serial.println(expmode);//0=OFF
+                  }
+                
+                }
+          //update time      
+          timem=millis();
+          delay(10);
+       //   }
+
+ 
+     //reading data from the analog input
+      
+     for (i=0;i<2;i++){
+         temp[i]=analogRead(A[i]); // reading 0-1023 0-5V on 2 pins 
+         }
+
+     if(counterNR>10){
+      data[4]=-1;
+      data[5]=-1;
+      }
+       delay(2600);
+     //message to send to the screen master
+     data[0]=temp[0];
+     data[1]=temp[1];
+     if(expmode==0){ 
+       for (i=0;i<1;i++){
+           Serial.print("messages sent:");
+           //send 2 times the message to the screen
+           RF24NetworkHeader header1(screenmaster);     // (Address where the data is going)
+           bool ok2 = network.write(header1, &data, sizeof(data)); // Send the data
+           delay(10);
+           Serial.println(ok2);
+       }
+     }
+    
+}
