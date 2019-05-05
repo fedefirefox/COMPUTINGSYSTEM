@@ -1,0 +1,570 @@
+ /*TOUCHSCREEN CODE
+*AUTHORS:Gian, Fede, Marta
+*DATA:05/05/2019
+*DESCRIPTION:SCreen code
+ */
+//Libraries
+#include <Adafruit_GFX.h>    // Core graphics library
+#include <Adafruit_TFTLCD.h> // Hardware-specific library
+#include <Fonts/FreeSans18pt7b.h>//font1
+#include <Fonts/FreeSans12pt7b.h>//font2
+#include <avr/pgmspace.h>//memory
+#include <TouchScreen.h>
+#include <RF24Network.h>
+#include <RF24.h>
+#include <SPI.h>
+#include <MCUFRIEND_kbv.h>
+#include "bitmap.h"//link to the document containing bitmaps
+
+
+//16-bit color values:
+#define BLACK   0x0000
+#define RED     0xF800
+#define WHITE   0xFFFF
+#define LBLUE   0x04FF
+#define GREEN   0x07E0
+#define GRAY    0x8410
+
+//Pin definitions
+#define YP A2  // must be an analog pin
+#define XM A3  // must be an analog pin
+#define YM 8   // can be a digital pin
+#define XP 9   // can be a digital pin
+
+//Pressure Parameters
+#define TS_MINX 130
+#define TS_MAXX 905
+#define TS_MINY 75
+#define TS_MAXY 930
+#define MINPRESSURE 10
+#define MAXPRESSURE 1000
+
+//Communication, definitions
+RF24 radio(37, 35);               // nRF24L01 (CE,CSN)
+RF24Network network(radio);      //creation of the network
+const uint16_t this_node = 00;  // Address of our node in Octal format ( 04,031, etc)
+const uint16_t bath = 01; 
+const uint16_t sensor1 = 02; 
+const uint16_t sensor2= 04; 
+int counter=0;//counter for the button of the exp mode
+int counterS1=0;//it counts the number of not receiving events from the sensor 1
+int counterS2=0;//from the sensor 2
+int counterbath=0;//from the bath
+int alertflag=0;//control the alert mode 
+int notreceiving=0;//1 if not receiving from someone
+
+//measured values
+double pump[4]={666,666,666,666}; //pressures
+int exponent[4]={0,0,0,0};
+
+//bath values
+int statobath=0;//set to no problems for the bath
+int on=1;//set to bath on
+
+//temp variables
+int i;
+int head;
+double temp[4];
+
+//Buttons
+// create 4 buttons, corresponding to the 4 vacuum chambers
+Adafruit_GFX_Button buttons[4];
+char buttonlabels[4][4] = {"1", "2", "3","4" };
+
+//create the button for the experiment mode
+Adafruit_GFX_Button expmode; 
+char explabel[] = " ";
+
+//variable for the experiment mode button
+int on_off = 0;
+//variable to change experiment mode button
+int change = 0;
+                          
+//Screen declaration
+MCUFRIEND_kbv tft;
+TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
+
+
+
+void setup(void) {
+  //for debug
+  Serial.begin(9600);
+
+  //draw the screen
+  drawscreen();
+  //communication initialization
+  SPI.begin();
+  radio.begin();
+  network.begin(90, this_node);  //(channel, node address)
+  radio.setDataRate(RF24_250KBPS);
+  radio.setChannel(124);
+  
+  }
+
+
+  
+  void loop() {
+  //time variables
+  int timem,ref;
+  timem=millis();
+  ref=timem;
+
+  //temp variables
+  int incomingData[4];
+  int out=0;
+  int network_avail=0;
+  int j=0;
+  int data[4]={0,0,0,0};
+
+  //receiving
+  //while(timem-ref<500 && timem-ref>-0.01 && out==0){ //change time according to the need, not used
+       network.update();//update the buffer with the new signals received
+       
+       while( network.available() ) {//if there is something to read
+            RF24NetworkHeader header;            
+            //In incominData[0] there is the variable to manage the alert mode
+            network.read(header, &incomingData, sizeof(incomingData));//read it
+            network_avail=1;
+            out=1;
+            //Serial.println(header.from_node);
+            if(header.from_node==2){
+              Serial.println("Received from the sensor1");
+              counterS1=0;
+              temp[0]=incomingData[0];
+              temp[1]=incomingData[1];
+              }
+              if(header.from_node==4){
+                  Serial.println("Received from the sensor2");
+                  pump[2]=(double)incomingData[0]/1000;
+                  exponent[2]=incomingData[1];
+                  pump[3]=(double)incomingData[2]/1000;
+                  exponent[3]=incomingData[3];
+                  counterS2=0;
+                  }
+                  //message coming from the bath
+                if(header.from_node==1){
+                   Serial.print("Received from the bath:");
+                   Serial.println(on);//0=OFF
+                   counterbath=0;
+                   on=incomingData[0];
+                   statobath=incomingData[1];
+                   }
+            }  
+            timem=millis();
+       //}
+
+  if(network_avail){ //update the screen if you have received something, values 1 and 2
+    for (i=0;i<2;i++){
+        if (temp[i]>0){
+           temp[i]=temp[i]*5/1023;
+           temp[i]=pow(10,(temp[i]-3.4229)/0.3025);//law of conversion for pressures
+           if (temp[i]<1){
+              j=0; 
+              while(temp[i]<1){//calculation of the exponent 
+                   temp[i]=temp[i]*10;
+                   j++;
+                   }
+              }
+              exponent[i]=-j;
+              pump[i]= temp[i];
+              }                      
+            else if (temp[i]<0) {
+            pump[i]=666;   //error message
+            exponent[i]=0;
+            }
+
+         if(j>12 ){//deleting critical case, no pressure below 10^-12
+           pump[i]=666;   //error message
+           exponent[i]=0;
+           }
+         }
+     }
+
+  if(counterS1>4 || on_off){ //no incoming data or experiment mode on
+    pump[0]=666;  
+    pump[1]=666;    
+    }
+    
+  if(counterS2>4 || on_off){ //no incoming data or experiment mode on
+    pump[2]=666;  
+    pump[3]=666;    
+    }
+    
+  counterS1++;
+  counterS2++;
+  counterbath++;
+  notreceiving=(counterS1>10 && on_off==0 )||(counterS2>10 && on_off==0 )|| (counterbath>10 && on_off==0 );
+
+  //manage the screen when an alert mode ends
+  //Serial.println(alertflag);
+  if(!(on==0) && alertflag==1){
+    alertflag=0;
+    if(on_off){
+      drawscreengreen();
+    }
+    else{
+    drawscreen();
+    }
+  }
+   if(!(statobath==1)&& alertflag==2){
+    alertflag=0;
+    if(on_off){
+      drawscreengreen();
+    }
+    else{
+    drawscreen();
+    }
+  }
+   if( !notreceiving && alertflag==3){
+    alertflag=0;
+    drawscreen();
+  }
+  
+  //update pressures on the screen
+  if ((network_avail || counterS1==5||counterS2==5)&& alertflag==0 && on_off==0) {//rewrite the screen
+     for (uint8_t row=0; row<4; row++) {
+         tft.fillRect(60,90+row*70, 240, 60, LBLUE);//rectangles to cover previous values
+         tft.setCursor(220,130+row*70);
+         tft.setTextColor(BLACK); 
+         tft.println("mbar");
+         }
+  tft.setFont(&FreeSans18pt7b);//new font
+  //set first value
+  tft.setCursor(70, 130);
+  tft.setTextColor(BLACK);    
+  tft.setTextSize(1);
+  if (pump[0]!=666){
+     tft.print(pump[0]); 
+     tft.print("e");
+     tft.println(exponent[0]);
+     }
+  else{tft.println("NR");//if there are no data
+      }
+  //set second value
+  tft.setCursor(70, 200);
+  tft.setTextColor(BLACK);    
+  tft.setTextSize(1);
+  if (pump[1]!=666){
+     tft.print(pump[1]); 
+     tft.print("e");
+     tft.println(exponent[1]);
+     }
+  else{tft.println("NR");
+      }
+  //set third value 
+  tft.setCursor(70, 270);
+  tft.setTextColor(BLACK);    
+  tft.setTextSize(1);
+  if (pump[2]!=666){
+     tft.print(pump[2]); 
+     tft.print("e");
+     tft.println(exponent[2]);
+     }
+  else{tft.println("NR");
+      }
+  //set fourth value
+  tft.setCursor(70, 340);
+  tft.setTextColor(BLACK);    
+  tft.setTextSize(1);
+  if (pump[3]!=666){
+     tft.print(pump[3]);
+     tft.print("e");
+     tft.println(exponent[3]);
+     }
+  else{tft.println("NR");
+      }
+  }
+  
+  timem=millis();
+  ref=timem;
+  //pressing the button 
+   while(timem-ref<5000 && timem-ref>-0.1){
+        digitalWrite(13, HIGH);
+        TSPoint p = ts.getPoint();
+        digitalWrite(13, LOW);
+        // if sharing pins, you'll need to fix the directions of the touchscreen pins
+        //pinMode(XP, OUTPUT);
+        pinMode(XM, OUTPUT);
+        pinMode(YP, OUTPUT);
+        //pinMode(YM, OUTPUT);
+
+        if (p.z > MINPRESSURE && p.z < MAXPRESSURE) {
+           p.x = p.x + p.y;       
+           p.y = p.x - p.y;            
+           p.x = p.x - p.y;   
+           p.x = map(p.x, TS_MINX, TS_MAXX, tft.width(), 0);
+           p.y = tft.height()-(map(p.y, TS_MINY, TS_MAXY, tft.height(), 0));
+           if ((expmode.contains(p.x, p.y))&&p.x>10) {
+              //Serial.print("Pressing");
+              expmode.press(true);  // tell the button it is pressed
+              } 
+           else {
+                expmode.press(false);  // tell the button it is NOT pressed
+                }
+           } 
+        else {
+             expmode.press(false);  // tell the button it is NOT pressed
+             }
+        if (expmode.justReleased()) {
+           //Serial.print("Released");
+           expmode.drawButton();  // draw normal
+           change = 1;
+           on_off = !on_off; // ON==1 
+           } 
+        else {
+             change=0;
+             }
+        if (change) {//draw button ON
+           if (on_off){
+              tft.fillRect(145, 385, 150, 80, GREEN);  
+              expmode.initButton(&tft, 220, 425, 150, 80, GREEN, GREEN, GREEN,explabel,1);
+              expmode.drawButton();
+              tft.setCursor(190, 435);
+              tft.setTextColor(WHITE);   
+              tft.setTextSize(1.5);
+              tft.println("ON");
+              counter=0;
+              } 
+            else {//draw button OFF
+                 tft.fillRect(145, 385, 150, 80, RED);  
+                 expmode.initButton(&tft, 220, 425, 150, 80, RED, RED, RED,explabel,1);
+                 expmode.drawButton();
+                 tft.setCursor(185, 435);
+                 tft.setTextColor(WHITE);    
+                 tft.setTextSize(1.5);
+                 tft.println("OFF");
+                 counter=0;
+                 }
+          }
+
+
+  timem=millis();
+  }
+
+  //experiment mode OFF, go on working
+  //message to 00 && 04 && bath
+  
+  if(on_off==1){//in exp mode we don't want to receive messages of not receiving
+    counterS1=0;
+    counterS2=0;
+    counterbath=0;
+  }
+   
+  //alert mode 
+  if(alertflag==0){
+   if(on==0){//bath off
+     tft.fillScreen(RED);
+     drawBitmap(50,50,image3,216,182,BLACK);
+     tft.setCursor(80,300);
+     tft.setTextColor(WHITE); 
+     tft.setTextSize(1);
+     tft.println("DANGER!");
+     tft.setCursor(45,350);
+     tft.setTextColor(WHITE); 
+     tft.setTextSize(1);
+     tft.println("CHILLER OFF");
+     alertflag=1;
+     }
+  if(statobath==1){//bath in anomalous state
+    tft.fillScreen(RED);
+    drawBitmap(50,50,image3,216,182,BLACK);
+    tft.setCursor(80,300);
+    tft.setTextColor(WHITE); 
+    tft.setTextSize(1);
+    tft.println("DANGER!");
+    tft.setCursor(20,350);
+    tft.setTextColor(WHITE); 
+    tft.setTextSize(1);
+    tft.println("CHILLER ERROR");
+    alertflag=2;
+    }
+  if(notreceiving){//one of the slaves is not sending messages
+    tft.fillScreen(RED);
+    drawBitmap(50,50,image3,216,182,BLACK);
+    tft.setCursor(80,300);
+    tft.setTextColor(WHITE); 
+    tft.setTextSize(1);
+    tft.println("DANGER!");
+    tft.setCursor(23,350);
+    tft.setTextColor(WHITE); 
+    tft.setTextSize(1);
+    tft.println("NOT RECEIVING");
+    alertflag=3;
+    }
+  }
+  data[0]=on_off;
+  
+  //Serial.println(on_off);
+  if(counter<2  || on_off==0 ){ //send the message two times
+    for (i=0;i<2;i++){
+        Serial.print("Messages sent:");
+        RF24NetworkHeader header2(sensor1);     // (Address where the data is going)
+        bool ok = network.write(header2, &data, sizeof(data)); // Send the data
+        delay(10);
+        RF24NetworkHeader header1(bath);     // (Address where the data is going)
+        bool ok2 = network.write(header1, &data, sizeof(data)); // Send the data
+        delay(10);
+        RF24NetworkHeader header3(sensor2);     // (Address where the data is going)
+        bool ok3 = network.write(header3, &data, sizeof(data)); // Send the data
+        delay(10);
+        Serial.print(ok2);
+        Serial.print(ok);
+        Serial.println(ok3);
+        counter ++;
+        }
+    }
+
+    //in exp mode, suppose the bath is working properly unless it sends a message
+    if(on_off){
+    on=1;
+    statobath=0;
+    }
+  }
+
+
+  void drawBitmap(int16_t x, int16_t y,const uint8_t *bitmap, int16_t w, int16_t h, uint16_t color) {
+                 int16_t i, j, byteWidth = (w + 7) / 8;
+                 uint8_t byte;
+                 for(j=0; j<h; j++) {
+                    for(i=0; i<w; i++) {
+                       if(i & 7) byte <<= 1;
+                       else      byte   = pgm_read_byte(bitmap + j * byteWidth + i / 8);
+                       if(byte & 0x80) tft.drawPixel(x+i, y+j, color);
+                       }
+                    }
+                  }
+
+
+
+  void drawscreengreen(){
+    
+    //reset screen
+  
+  tft.reset();
+
+  //read state
+  uint16_t identifier = tft.readID();
+  tft.begin(identifier);
+
+  //screen settings
+  tft.setRotation(0);
+  tft.fillScreen(BLACK);// black screen
+
+  //timing
+  unsigned long start = micros();
+
+  //set font
+  tft.setFont(&FreeSans18pt7b);
+
+  //title
+  tft.setCursor(10, 43);
+  tft.setTextColor(WHITE);    
+  tft.setTextSize(1.5);
+  tft.println("PRESSURE");
+
+  //pressure image
+  drawBitmap(240, 10, image, 50, 50,WHITE);
+
+  //pressure, rectangles numbers
+  for (uint8_t row=0; row<4; row++) {
+      tft.fillRect(10,90+row*70, 300, 60, LBLUE);
+      tft.setCursor(30,130+row*70);
+      tft.setTextColor(WHITE); 
+      tft.println(buttonlabels[row]);
+      tft.setCursor(220,130+row*70);
+      tft.setTextColor(BLACK); 
+      tft.println("mbar");
+      }
+
+  //set new font 
+  tft.setFont(&FreeSans12pt7b);
+  
+  //label experiment mode
+  tft.setCursor(10, 420);
+  tft.setTextColor(GRAY);    
+  tft.setTextSize(1.5);
+  tft.println("Experiment");
+
+  tft.setCursor(10, 445);
+  tft.setTextColor(GRAY);    
+  tft.setTextSize(1.5);
+  tft.println("mode");
+
+  //reset font
+  tft.setFont(&FreeSans18pt7b);
+
+  //button on-off
+  tft.fillRect(145, 385, 150, 80, GREEN);  
+  expmode.initButton(&tft, 220, 425, 150, 80, GREEN, GREEN, GREEN,explabel,1);
+  expmode.drawButton();
+  tft.setCursor(190, 435);
+  tft.setTextColor(WHITE);    
+  tft.setTextSize(1.5);
+  tft.println("ON");
+  }    
+  void drawscreen(){    
+      
+    //reset screen
+  
+  tft.reset();
+
+  //read state
+  uint16_t identifier = tft.readID();
+  tft.begin(identifier);
+
+  //screen settings
+  tft.setRotation(0);
+  tft.fillScreen(BLACK);// black screen
+
+  //timing
+  unsigned long start = micros();
+
+  //set font
+  tft.setFont(&FreeSans18pt7b);
+
+  //title
+  tft.setCursor(10, 43);
+  tft.setTextColor(WHITE);    
+  tft.setTextSize(1.5);
+  tft.println("PRESSURE");
+
+  //pressure image
+  drawBitmap(240, 10, image, 50, 50,WHITE);
+
+  //pressure, rectangles numbers
+  for (uint8_t row=0; row<4; row++) {
+      tft.fillRect(10,90+row*70, 300, 60, LBLUE);
+      tft.setCursor(30,130+row*70);
+      tft.setTextColor(WHITE); 
+      tft.println(buttonlabels[row]);
+      tft.setCursor(220,130+row*70);
+      tft.setTextColor(BLACK); 
+      tft.println("mbar");
+      }
+
+  //set new font 
+  tft.setFont(&FreeSans12pt7b);
+  
+  //label experiment mode
+  tft.setCursor(10, 420);
+  tft.setTextColor(GRAY);    
+  tft.setTextSize(1.5);
+  tft.println("Experiment");
+
+  tft.setCursor(10, 445);
+  tft.setTextColor(GRAY);    
+  tft.setTextSize(1.5);
+  tft.println("mode");
+
+  //reset font
+  tft.setFont(&FreeSans18pt7b);
+
+  //button on-off
+  tft.fillRect(145, 385, 150, 80, RED);  
+  expmode.initButton(&tft, 220, 425, 150, 80, RED, RED, RED,explabel,1);
+  expmode.drawButton();
+  tft.setCursor(185, 435);
+  tft.setTextColor(WHITE);    
+  tft.setTextSize(1.5);
+  tft.println("OFF");
+  }
