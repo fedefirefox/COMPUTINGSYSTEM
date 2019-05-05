@@ -1,0 +1,141 @@
+  /*SENSOR 2 CODE
+*AUTHORS:Fede, Marta, Gian
+*DATA:05/05/2019
+*DESCRIPTION:Sensor code
+ */
+//Libraries
+#include <RF24Network.h>
+#include <RF24.h>
+#include <SPI.h>
+#include <SoftwareSerial.h>
+
+//definition of transmission and reception pins
+#define rxPin 6
+#define txPin 7
+
+//set up a new serial port
+SoftwareSerial altSerial =  SoftwareSerial(rxPin, txPin);
+
+//communication
+RF24 radio(10, 9); 
+RF24Network network(radio);      // Include the radio in the network
+const uint16_t this_node = 04;   // Address of this node in Octal format ( 04,031, etc)
+const uint16_t  screenmaster= 00;      // Address of the other node in Octal format
+
+//time variables
+int timem,ref;
+
+//control variables
+int data[4]={-1,-1,-1,-1}; // sent data
+int incomingData[3]; //received data 
+int checkscreen;
+int expmode=1;
+
+
+void setup() {
+  //communication initialization
+  Serial.begin(9600);
+  SPI.begin();
+  radio.begin();
+  network.begin(90, this_node);  //(channel, node address)
+  radio.setDataRate(RF24_250KBPS);
+  radio.setChannel(124);
+  //rs232 communication
+  pinMode(rxPin, INPUT);
+  pinMode(txPin, OUTPUT);
+  altSerial.begin(9600);//speed needed by the sensor, 8 bit, no parity bit , 1 stop bit
+  }
+
+void loop() {
+  //temp variables
+  int i;
+  int temp[2]={0,0}; 
+  int k;
+  int start;
+  
+  //pressure variables
+  char response[1000];
+  double pressure1=0;
+  double pressure2=0;
+  double exponent1=0;
+  double exponent2=0;
+  
+  //sensor responses
+  char resp1[]={'b',','};
+  char resp2[]={',','d',','};
+
+  
+  //time update   
+  timem=millis();
+  ref=timem;
+  //control initialization
+  checkscreen=0;
+  //while(timem-ref<500 && timem-ref>-0.01){
+       network.update(); 
+       while ( network.available() ) {//read data and recognize the provenience
+             RF24NetworkHeader header;
+             network.read(header, &incomingData, sizeof(incomingData));
+             //Serial.println(header.from_node);
+             //message coming from the screen
+             if(header.from_node==0){
+               checkscreen=1;
+               expmode=incomingData[0];
+               Serial.print("Received from the screen..Mode exp:");
+               Serial.println(expmode);//0=OFF
+               }
+             }
+       timem=millis();
+       delay(10);
+  //     }
+
+       
+  //read pressures, knowing the format of the messsages
+  relisten:
+  if(altSerial.available()){
+    i=0;
+    while(altSerial.available() > 0 ){
+  response[i]=altSerial.read();
+  
+  //Serial.print(response[i]);
+  if(response[0]=='0')
+  {start=0;}
+  else{
+   goto relisten;
+   }
+  if(i==40){
+   while(altSerial.available() > 0 ){
+    altSerial.read();
+    delay(2);
+   }}
+     i++;
+  delay(2);
+  }
+    pressure1= ((int)response[start+3]-48)*1000+((int)response[start+5]-48)*100+((int)response[start+6]-48)*10+((int)response[start+7]-48);
+    exponent1=-(((int)response[start+11]-48)*10+((int)response[start+12]-48));
+   Serial.println(pressure1);
+   Serial.println(exponent1);
+   
+    pressure2=((int)response[start+17]-48)*1000+((int)response[start+19]-48)*100+((int)response[start+20]-48)*10+((int)response[start+21]-48);
+    exponent2=-(((int)response[start+25]-48)*10+((int)response[start+26]-48));
+     Serial.println(pressure2);
+     Serial.println(exponent2);
+  }
+      
+  //send messages
+  data[0]=pressure1;
+  data[1]=exponent1;
+  data[2]=pressure2;
+  data[3]=exponent2;
+ 
+  if(expmode==0){ 
+    for (i=0;i<1;i++){
+        //message to the screen
+        Serial.print("messages sent:");
+        RF24NetworkHeader header1(screenmaster); // (Address where the data is going)
+        bool ok2 = network.write(header1, &data, sizeof(data)); // Send the data
+        Serial.println(ok2);
+        delay(10);
+        }
+    }
+    delay(2000);
+  }
