@@ -1,0 +1,236 @@
+/*BATH CODE
+*AUTHORS:Marta, Fede, Gian
+*DATA:05/05/2019
+*DESCRIPTION:Bath code
+ */
+//Libraries
+#include <SoftwareSerial.h>
+#include <RF24Network.h>
+#include <RF24.h>
+#include <SPI.h>
+
+//definition of transmission and reception pins
+#define rxPin 6
+#define txPin 7
+
+//set up a new serial port
+SoftwareSerial mySerial =  SoftwareSerial(rxPin, txPin);
+
+//set up communication
+RF24 radio(10, 9); 
+RF24Network network(radio);
+const uint16_t this_node = 01; 
+const uint16_t screenmaster = 00;
+
+//time variables
+int timem,ref;
+
+//exp mode variable
+int expmode=1;
+int counter;
+
+ //commands for the bath
+  byte turnon[]={0xca, 0x0, 0x01, 0x20,0x81 ,0x08,0x01,0x02,0x02,0x02,0x02,0x02,0x02,0x02};//turn on the unit
+  byte readstatus[]={0xca, 0x0, 0x01, 0x09,0x0};//reading the status
+  byte resptoreadstatus[]={0xca, 0x00, 0x01, 0x09, 0x05};//answer to status request
+
+void setup()  {
+  pinMode(rxPin, INPUT);
+  pinMode(txPin, OUTPUT);
+  mySerial.begin(19200);//speed needed by the bath, 8 bit, no parity bit , 1 stop bit
+  Serial.begin(9600);
+  
+  //communication initialization
+  SPI.begin();
+  radio.begin();
+  network.begin(90, this_node);  //(channel, node address)
+  radio.setDataRate(RF24_250KBPS);
+  radio.setChannel(124);
+  }
+
+void loop(){
+  //temp variables
+  int i=0;
+  int k;
+  
+  //control variables
+  int data[4]={1,0,0,0};
+  int incomingData[3];
+  int on=1;
+  int notgood=0;
+  int fault=0;
+  byte response[20];
+  int checkscreen;
+ 
+   
+  //Communication
+  //update time
+  timem=millis();
+  ref=timem;
+  
+  //receiving data
+  //while(timem-ref<500 && timem-ref>-0.01){
+       network.update();
+       while ( network.available() ) {//read incoming data
+             RF24NetworkHeader header;
+             network.read(header, &incomingData, sizeof(incomingData));
+             //Serial.println(header.from_node);
+             //message from the screen
+             if(header.from_node==0){
+               checkscreen=1;
+               expmode=incomingData[0];
+               Serial.print("Received from the screen..Mode exp:");
+               Serial.println(expmode);//0=OFF
+               }
+             }
+       //update time
+       timem=millis();
+       delay(10);
+       //}  
+   
+
+  //send command to read the status of the bath
+  sendcommand(readstatus,sizeof(readstatus));
+  delay(1000);//waiting for the response
+         
+             
+  //receiving response
+  //inizio:
+  if (mySerial.available()){
+     i=0;
+     counter=0;
+     while(mySerial.available() > 0 ){
+          response[i]=mySerial.read();//it reads the first byte available in the buffer
+          Serial.print(response[i],HEX);
+          delay(2);//waiting for the update of the buffer
+          i++;
+          }
+          
+  
+     //verify the first part of the command
+     for(k=0;k<5;k++){
+        if(response[k]!=resptoreadstatus[k]){
+          Serial.println("the first part of the sequence is not correct");
+          while(mySerial.available() > 0 ){
+               mySerial.read();//empty the buffer before resending the command
+               }
+          goto endofall;
+          } 
+        }
+   
+    
+    
+     //verify checksum
+     if(response[i-1]!=checksum(1,i-2,response)){
+       //Serial.println("checksum wrong");
+       goto endofall;
+       }
+     else {
+       Serial.println("checksum correct"); }
+
+ 
+     //status information
+       switch (response[8] & (byte)0x0e) {
+         case (byte)0x0e:
+             on=1;
+             Serial.println("good");
+            break;
+         case (byte)0x0a:
+             on=1;
+             notgood=1;
+             Serial.println("anomaly");
+            break;
+            
+         case (byte)0x08:
+              Serial.println("anomaly");
+              on=1;
+              notgood=1;
+             break;
+         case (byte)0x00:
+              Serial.println("bath off");
+              on=0;
+             break;
+            
+      }
+
+      
+     //bath information
+          switch (response[8] & (byte)0xf0) {
+            case (byte)0x10:
+                 on=1;
+                 fault=1;
+                 Serial.println("unit faulted");
+                break;
+            case (byte)0x20:
+                 on=0;
+                 Serial.println("unit stopping");
+                break;
+            
+           default:
+                 Serial.print("else");
+                break; 
+            
+      }
+       
+     endofall:
+     delay(2000);
+     //goto inizio; 
+     } 
+
+    //if the bath is off, turn it on
+    if(on==0){
+    sendcommand(turnon,sizeof(turnon));
+    //Serial.println("turn on command sent");
+    delay(1000);
+    //receiving the response, this response is not elaborated
+    if (mySerial.available()){
+     i=0;
+     counter=0;
+     while(mySerial.available() > 0 ){
+          response[i]=mySerial.read();
+          Serial.print(response[i],HEX);
+          delay(2);
+          i++;
+          }
+    }
+  }
+
+    
+//send info about the bath, on, not good
+  data[0]=on; // packet for the screen master
+  data[1]=notgood || fault;
+     if(counter>15){//the bath is not responding
+    data[1]=1;
+   }
+   counter++;
+   
+  if(expmode==0 || on==0 ||data[1]==1){ //send packet if there are errors
+    for(i=0;i<1;i++){
+      Serial.print("messages sent:");
+       RF24NetworkHeader header1(screenmaster);     // (Address where the data is going)
+       bool ok2 = network.write(header1, &data, sizeof(data)); 
+       Serial.println(ok2);
+       delay(10);
+       }
+    }
+   //counter=0; //to test without the bath
+  }
+
+
+
+
+byte checksum(int inizio,int fine,byte vector[])  {
+  byte sum=0x0;
+  for (int j=inizio;j<fine+1;j++){
+      sum=sum+vector[j];
+      }
+  return(sum xor 0xFF);
+  }
+
+
+void sendcommand(byte vector[],int dim)  {
+  for (int j=0;j<dim;j++){
+      mySerial.write(vector[j]);
+      }
+  mySerial.write(checksum(1,dim-1,vector));
+  }
