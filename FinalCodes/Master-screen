@@ -144,10 +144,12 @@ void setup(void) {
                   //message coming from the bath
                 if(header.from_node==1){
                    Serial.print("Received from the bath:");
-                   Serial.println(on);//0=OFF
                    counterbath=0;
                    on=incomingData[0];
                    statobath=incomingData[1];
+                   Serial.print(on);//0=OFF
+                   Serial.print(',');
+                   Serial.println(statobath);
                    }
             }  
             timem=millis();
